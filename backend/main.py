@@ -1,108 +1,165 @@
 """
-주식 날씨 예보판 - FastAPI 메인 서버
+주식 날씨 예보판 - FastAPI 메인 서버 (개선된 버전)
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
 import asyncio
 import logging
-import os
-from dotenv import load_dotenv
+import structlog
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+import time
 
+from config import settings
+from models import *
 from data_pipeline import DataPipeline
 from score_calculator import FundamentalScorer
 from ml_predictor import StockPredictor
 from cache_manager import CacheManager
+from exceptions import *
 
-# 환경 설정
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# 구조화된 로깅 설정
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger()
+
+# 전역 인스턴스
+data_pipeline = None
+scorer = None
+predictor = None
+cache = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """애플리케이션 생명주기 관리"""
+    global data_pipeline, scorer, predictor, cache
+    
+    logger.info("application_startup", env=settings.env)
+    
+    try:
+        # 설정 검증
+        settings.validate_settings()
+        
+        # 인스턴스 초기화
+        cache = CacheManager(settings.cache_db_path)
+        await cache.initialize()
+        
+        data_pipeline = DataPipeline(cache)
+        scorer = FundamentalScorer()
+        predictor = StockPredictor()
+        
+        # ML 모델 로드
+        await predictor.load_models()
+        
+        # 초기 데이터 수집 (백그라운드)
+        asyncio.create_task(initial_data_collection())
+        
+        logger.info("application_startup_complete")
+        
+    except Exception as e:
+        logger.error("application_startup_failed", error=str(e))
+        raise
+    
+    yield
+    
+    # 종료 시 정리
+    logger.info("application_shutdown")
+    if cache:
+        await cache.close()
 
 # FastAPI 앱 초기화
 app = FastAPI(
     title="주식 날씨 예보판 API",
     description="AI 기반 주식 상승/하락 확률 예측 서비스",
-    version="1.0.0"
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
-# 전역 인스턴스
-data_pipeline = DataPipeline()
-scorer = FundamentalScorer()
-predictor = StockPredictor()
-cache = CacheManager()
+# 에러 핸들러
+@app.exception_handler(StockWeatherException)
+async def stock_weather_exception_handler(request: Request, exc: StockWeatherException):
+    logger.error("custom_exception", exception=str(exc), path=request.url.path)
+    return JSONResponse(
+        status_code=400,
+        content={"detail": str(exc), "type": exc.__class__.__name__}
+    )
 
-# 데이터 모델
-class StockRanking(BaseModel):
-    ticker: str
-    name: str
-    sector: str
-    probability: float
-    expected_return: float
-    fundamental_score: float
-    weather_icon: str
-    confidence: float
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error("unhandled_exception", exception=str(exc), path=request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "type": "InternalError"}
+    )
 
-class DetailedStock(BaseModel):
-    ticker: str
-    name: str
-    sector: str
-    current_price: float
-    probability: float
-    expected_return: float
-    fundamental_breakdown: Dict[str, float]
-    price_history: List[Dict[str, float]]
-    news_sentiment: Optional[float]
-    technical_indicators: Dict[str, float]
-    last_updated: datetime
-
-@app.on_event("startup")
-async def startup_event():
-    """서버 시작 시 초기화"""
-    logger.info("주식 날씨 예보판 서버 시작...")
+# 미들웨어: 요청 로깅
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
     
-    # 캐시 초기화
-    await cache.initialize()
+    response = await call_next(request)
     
-    # ML 모델 로드
-    await predictor.load_models()
+    process_time = time.time() - start_time
+    logger.info(
+        "request_processed",
+        path=request.url.path,
+        method=request.method,
+        status_code=response.status_code,
+        process_time=process_time
+    )
     
-    # 초기 데이터 수집 (백그라운드)
-    asyncio.create_task(initial_data_collection())
+    return response
 
 async def initial_data_collection():
     """초기 데이터 수집"""
     try:
+        logger.info("initial_data_collection_started")
+        
         # 한국 주식
         kr_tickers = await data_pipeline.get_kr_tickers()
-        await data_pipeline.fetch_batch_data(kr_tickers[:100], market='KR')
+        await data_pipeline.fetch_batch_data(kr_tickers[:100], market=Market.KR)
         
         # 미국 주식
         us_tickers = await data_pipeline.get_us_tickers()
-        await data_pipeline.fetch_batch_data(us_tickers[:100], market='US')
+        await data_pipeline.fetch_batch_data(us_tickers[:100], market=Market.US)
         
-        logger.info("초기 데이터 수집 완료")
+        logger.info("initial_data_collection_completed")
     except Exception as e:
-        logger.error(f"초기 데이터 수집 실패: {e}")
+        logger.error("initial_data_collection_failed", error=str(e))
 
 @app.get("/")
 async def root():
     """API 정보"""
     return {
         "service": "Stock Weather Dashboard",
-        "version": "1.0.0",
+        "version": "2.0.0",
+        "environment": settings.env,
         "endpoints": {
             "/rankings": "상승/하락 확률 랭킹",
             "/detail/{ticker}": "종목 상세 정보",
@@ -111,20 +168,23 @@ async def root():
         }
     }
 
-@app.get("/rankings", response_model=Dict[str, List[StockRanking]])
+@app.get("/rankings", response_model=RankingsResponse)
 async def get_rankings(
-    market: str = "ALL",
+    market: Market = Market.ALL,
     limit: int = 20,
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """상승/하락 확률 랭킹 조회"""
+    logger.info("rankings_requested", market=market, limit=limit)
+    
     try:
-        # 캐시 확인
-        cache_key = f"rankings_{market}_{limit}"
+        # 캐시 키 생성
+        cache_key = cache.generate_cache_key(f"rankings_{market}_{limit}", "rankings")
         cached = await cache.get(cache_key)
         
         if cached and not await should_refresh_cache(cached):
-            return cached
+            logger.info("rankings_from_cache", cache_key=cache_key)
+            return RankingsResponse(**cached)
         
         # 새로운 데이터 수집 및 예측
         stocks = await get_stock_predictions(market)
@@ -137,30 +197,39 @@ async def get_rankings(
         for stock in top_gainers + top_losers:
             stock['weather_icon'] = get_weather_icon(stock['probability'])
         
-        rankings = {
+        rankings_data = {
             "top_gainers": [StockRanking(**s) for s in top_gainers],
             "top_losers": [StockRanking(**s) for s in top_losers],
-            "updated_at": datetime.now().isoformat()
+            "updated_at": datetime.now()
         }
         
         # 캐시 업데이트 (백그라운드)
-        background_tasks.add_task(cache.set, cache_key, rankings, ttl=3600)
+        background_tasks.add_task(
+            cache.set, 
+            cache_key, 
+            rankings_data, 
+            ttl=settings.cache_ttl
+        )
         
-        return rankings
+        logger.info("rankings_generated", gainers_count=len(top_gainers), losers_count=len(top_losers))
+        return RankingsResponse(**rankings_data)
         
     except Exception as e:
-        logger.error(f"랭킹 조회 오류: {e}")
+        logger.error("rankings_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/detail/{ticker}", response_model=DetailedStock)
 async def get_stock_detail(ticker: str):
     """종목 상세 정보 조회"""
+    logger.info("stock_detail_requested", ticker=ticker)
+    
     try:
         # 캐시 확인
-        cache_key = f"detail_{ticker}"
+        cache_key = cache.generate_cache_key(ticker, "detail")
         cached = await cache.get(cache_key)
         
-        if cached and (datetime.now() - cached['last_updated']).seconds < 3600:
+        if cached and (datetime.now() - cached['last_updated']).seconds < settings.cache_freshness:
+            logger.info("stock_detail_from_cache", ticker=ticker)
             return DetailedStock(**cached)
         
         # 데이터 수집
@@ -176,63 +245,74 @@ async def get_stock_detail(ticker: str):
         prediction = await predictor.predict_single(stock_data)
         
         # 기술적 지표 계산
-        technical = calculate_technical_indicators(stock_data['price_history'])
+        technical = calculate_technical_indicators(stock_data.get('price_history', []))
         
         # 뉴스 감성 분석 (옵션)
         news_sentiment = await analyze_news_sentiment(ticker) if ticker.endswith('.KS') else None
         
-        detailed_info = {
-            "ticker": ticker,
-            "name": stock_data['name'],
-            "sector": stock_data['sector'],
-            "current_price": stock_data['current_price'],
-            "probability": prediction['probability'],
-            "expected_return": prediction['expected_return'],
-            "fundamental_breakdown": breakdown,
-            "price_history": stock_data['price_history'][-120:],  # 최근 120일
-            "news_sentiment": news_sentiment,
-            "technical_indicators": technical,
-            "last_updated": datetime.now()
-        }
+        # 가격 이력 변환
+        price_history = [
+            PriceHistory(**p) for p in stock_data.get('price_history', [])[-120:]
+        ]
+        
+        detailed_info = DetailedStock(
+            ticker=ticker,
+            name=stock_data.get('name', ticker),
+            sector=stock_data.get('sector', 'Unknown'),
+            current_price=stock_data.get('current_price', 0),
+            probability=prediction['probability'],
+            expected_return=prediction['expected_return'],
+            fundamental_breakdown=breakdown,
+            price_history=price_history,
+            news_sentiment=news_sentiment,
+            technical_indicators=technical,
+            last_updated=datetime.now()
+        )
         
         # 캐시 저장
-        await cache.set(cache_key, detailed_info, ttl=3600)
+        await cache.set(cache_key, detailed_info.dict(), ttl=settings.cache_ttl)
         
-        return DetailedStock(**detailed_info)
+        logger.info("stock_detail_generated", ticker=ticker)
+        return detailed_info
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"상세 정보 조회 오류 {ticker}: {e}")
+        logger.error("stock_detail_error", ticker=ticker, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/sectors")
 async def get_sector_weather():
     """섹터별 날씨 지도"""
+    logger.info("sector_weather_requested")
+    
     try:
         # 섹터별 평균 확률 계산
         sector_data = await data_pipeline.get_sector_aggregates()
         
         sector_weather = []
         for sector, data in sector_data.items():
-            avg_probability = data['avg_probability']
-            weather = {
-                "sector": sector,
-                "probability": avg_probability,
-                "weather_icon": get_weather_icon(avg_probability),
-                "weather_desc": get_weather_description(avg_probability),
-                "stock_count": data['count'],
-                "top_stock": data['top_stock']
-            }
+            avg_probability = data.get('avg_probability', 0.5)
+            weather = SectorWeather(
+                sector=sector,
+                probability=avg_probability,
+                weather_icon=get_weather_icon(avg_probability),
+                weather_desc=get_weather_description(avg_probability),
+                stock_count=data.get('count', 0),
+                top_stock=data.get('top_stock', '')
+            )
             sector_weather.append(weather)
         
-        return {
-            "sectors": sorted(sector_weather, key=lambda x: x['probability'], reverse=True),
+        result = {
+            "sectors": sorted(sector_weather, key=lambda x: x.probability, reverse=True),
             "updated_at": datetime.now().isoformat()
         }
         
+        logger.info("sector_weather_generated", sector_count=len(sector_weather))
+        return result
+        
     except Exception as e:
-        logger.error(f"섹터 날씨 조회 오류: {e}")
+        logger.error("sector_weather_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
@@ -240,16 +320,22 @@ async def health_check():
     """서버 상태 확인"""
     try:
         # 각 컴포넌트 상태 확인
-        cache_status = await cache.health_check()
-        model_status = predictor.is_loaded
+        checks = {
+            "cache": await cache.health_check() if cache else False,
+            "models": predictor.is_loaded if predictor else False,
+            "data_pipeline": data_pipeline is not None
+        }
+        
+        all_healthy = all(checks.values())
         
         return {
-            "status": "healthy" if cache_status and model_status else "unhealthy",
-            "cache": "ok" if cache_status else "error",
-            "models": "loaded" if model_status else "not loaded",
-            "timestamp": datetime.now().isoformat()
+            "status": "healthy" if all_healthy else "unhealthy",
+            "checks": checks,
+            "timestamp": datetime.now().isoformat(),
+            "environment": settings.env
         }
     except Exception as e:
+        logger.error("health_check_error", error=str(e))
         return {
             "status": "error",
             "error": str(e),
@@ -262,27 +348,35 @@ async def should_refresh_cache(cached_data: Dict) -> bool:
     if not cached_data:
         return True
     
-    # 3시간 TTL
+    # 업데이트 시간 확인
     if 'updated_at' in cached_data:
-        age = (datetime.now() - datetime.fromisoformat(cached_data['updated_at'])).seconds
-        if age > 10800:  # 3시간
+        if isinstance(cached_data['updated_at'], str):
+            updated_at = datetime.fromisoformat(cached_data['updated_at'])
+        else:
+            updated_at = cached_data['updated_at']
+        
+        age = (datetime.now() - updated_at).seconds
+        
+        # 3시간 TTL
+        if age > settings.cache_ttl:
             return True
+        
+        # 최근 1시간 이내 데이터는 유지
+        if age < settings.cache_freshness:
+            return False
     
-    # 최근 1시간 이내 데이터는 유지
-    if age < 3600:
-        return False
-    
-    # ±5% 변동 체크 (구현 필요)
-    # TODO: 실시간 가격과 비교하여 큰 변동이 있으면 True
+    # TODO: ±5% 변동 체크 구현
     
     return False
 
-async def get_stock_predictions(market: str) -> List[Dict]:
+async def get_stock_predictions(market: Market) -> List[Dict]:
     """주식 예측 데이터 생성"""
+    logger.info("generating_predictions", market=market)
+    
     # 티커 목록 가져오기
-    if market == "KR":
+    if market == Market.KR:
         tickers = await data_pipeline.get_kr_tickers()
-    elif market == "US":
+    elif market == Market.US:
         tickers = await data_pipeline.get_us_tickers()
     else:  # ALL
         kr_tickers = await data_pipeline.get_kr_tickers()
@@ -292,28 +386,32 @@ async def get_stock_predictions(market: str) -> List[Dict]:
     predictions = []
     
     # 배치 처리
-    for i in range(0, len(tickers), 100):
-        batch = tickers[i:i+100]
+    for i in range(0, len(tickers), settings.batch_size):
+        batch = tickers[i:i+settings.batch_size]
         batch_data = await data_pipeline.fetch_batch_data(batch, market)
         
         for ticker, data in batch_data.items():
             if data:
-                # 펀더멘털 스코어
-                fundamental_score = await scorer.calculate_score(data)
-                
-                # ML 예측
-                prediction = await predictor.predict_single(data)
-                
-                predictions.append({
-                    "ticker": ticker,
-                    "name": data.get('name', ticker),
-                    "sector": data.get('sector', 'Unknown'),
-                    "probability": prediction['probability'],
-                    "expected_return": prediction['expected_return'],
-                    "fundamental_score": fundamental_score,
-                    "confidence": prediction.get('confidence', 0.5)
-                })
+                try:
+                    # 펀더멘털 스코어
+                    fundamental_score = await scorer.calculate_score(data)
+                    
+                    # ML 예측
+                    prediction = await predictor.predict_single(data)
+                    
+                    predictions.append({
+                        "ticker": ticker,
+                        "name": data.get('name', ticker),
+                        "sector": data.get('sector', 'Unknown'),
+                        "probability": prediction['probability'],
+                        "expected_return": prediction['expected_return'],
+                        "fundamental_score": fundamental_score,
+                        "confidence": prediction.get('confidence', 0.5)
+                    })
+                except Exception as e:
+                    logger.error("prediction_error", ticker=ticker, error=str(e))
     
+    logger.info("predictions_generated", count=len(predictions))
     return predictions
 
 def get_weather_icon(probability: float) -> str:
@@ -345,19 +443,51 @@ def get_weather_description(probability: float) -> str:
 def calculate_technical_indicators(price_history: List[Dict]) -> Dict[str, float]:
     """기술적 지표 계산"""
     if len(price_history) < 20:
-        return {}
+        return {
+            "ma20": 0,
+            "ma60": 0,
+            "rsi": 50,
+            "volatility": 0
+        }
     
-    closes = [p['close'] for p in price_history]
+    try:
+        closes = [p['close'] for p in price_history]
+        
+        # 이동평균
+        ma20 = sum(closes[-20:]) / 20
+        ma60 = sum(closes[-60:]) / 60 if len(closes) >= 60 else ma20
+        
+        # RSI
+        rsi = calculate_rsi(closes)
+        
+        # 변동성
+        volatility = calculate_volatility(closes[-20:])
+        
+        return {
+            "ma20": round(ma20, 2),
+            "ma60": round(ma60, 2),
+            "rsi": round(rsi, 2),
+            "volatility": round(volatility, 2)
+        }
+    except Exception as e:
+        logger.error("technical_indicators_error", error=str(e))
+        return {
+            "ma20": 0,
+            "ma60": 0,
+            "rsi": 50,
+            "volatility": 0
+        }
+
+def calculate_rsi(prices: List[float], period: int = 14) -> float:
+    """RSI 계산"""
+    if len(prices) < period + 1:
+        return 50.0
     
-    # 이동평균
-    ma20 = sum(closes[-20:]) / 20
-    ma60 = sum(closes[-60:]) / 60 if len(closes) >= 60 else ma20
-    
-    # RSI
     gains = []
     losses = []
-    for i in range(1, len(closes)):
-        diff = closes[i] - closes[i-1]
+    
+    for i in range(1, len(prices)):
+        diff = prices[i] - prices[i-1]
         if diff > 0:
             gains.append(diff)
             losses.append(0)
@@ -365,31 +495,33 @@ def calculate_technical_indicators(price_history: List[Dict]) -> Dict[str, float
             gains.append(0)
             losses.append(abs(diff))
     
-    avg_gain = sum(gains[-14:]) / 14 if gains else 0
-    avg_loss = sum(losses[-14:]) / 14 if losses else 0
-    rs = avg_gain / avg_loss if avg_loss > 0 else 100
+    avg_gain = sum(gains[-period:]) / period if gains else 0
+    avg_loss = sum(losses[-period:]) / period if losses else 0
+    
+    if avg_loss == 0:
+        return 100.0
+    
+    rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     
-    return {
-        "ma20": ma20,
-        "ma60": ma60,
-        "rsi": rsi,
-        "volatility": calculate_volatility(closes[-20:])
-    }
+    return rsi
 
 def calculate_volatility(prices: List[float]) -> float:
     """변동성 계산"""
     import numpy as np
+    
+    if len(prices) < 2:
+        return 0.0
+    
     returns = [(prices[i] / prices[i-1] - 1) for i in range(1, len(prices))]
     return np.std(returns) * np.sqrt(252) * 100  # 연율화
 
 async def analyze_news_sentiment(ticker: str) -> float:
     """뉴스 감성 분석 (한국 주식만)"""
     # TODO: 실제 구현 시 news_analyzer.py 모듈 사용
-    # 임시로 랜덤 값 반환
     import random
     return random.uniform(-1, 1)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=None)
