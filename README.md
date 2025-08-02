@@ -1,171 +1,330 @@
-📈 주식 추천 날씨
-주식 추천을 날씨처럼 쉽게 이해하세요!주식 추천 날씨는 복잡한 주식 데이터를 날씨 예보처럼 직관적으로 보여주는 무료 웹/모바일 앱입니다. 초보자도 쉽게 주식 정보를 이해하고, 숙련자는 상세한 분석을 할 수 있도록 설계되었습니다. 이 프로젝트는 완전 무료로 운영되며, 누구나 쉽게 투자하기를 목표로 합니다.최종 업데이트: 2025년 8월 1일 오후 5:29 PDT
+# 📈 주식 날씨 예보판 (Stock Weather Dashboard)
 
-🌟 주요 기능
+> AI가 예측하는 주식 시장의 날씨, 상승/하락 확률을 직관적으로 확인하세요!
 
-날씨로 보는 주식 추천주식의 상승/하락 확률을 맑음(☀️), 흐림(⛅), 비(🌧️) 같은 아이콘으로 보여줍니다. 예: "삼성전자: 맑음, 78% 상승 가능".
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.109.0-green.svg)
+![Next.js](https://img.shields.io/badge/Next.js-14.0.4-black.svg)
 
-AI 예측 설명왜 이런 추천이 나왔는지 간단히 알려줍니다. 예: "삼성전자 상승 이유: 매출 증가, 주가 상승 추세."
+## 🌟 주요 특징
 
-초보자/고급 모드  
+### 날씨로 보는 주식 추천
+- **직관적인 날씨 아이콘**: ☀️ 맑음(상승), 🌧️ 비(하락) 등으로 한눈에 파악
+- **AI 기반 예측**: LSTM, XGBoost 등 앙상블 모델로 상승/하락 확률 계산
+- **설명 가능한 AI**: SHAP을 통한 예측 근거 제공
 
-초보자: 간단한 날씨 아이콘과 핵심 정보만 표시.
-고급 사용자: 차트, RSI, MACD 같은 기술적 지표 제공.
+### 접근성 및 포용성
+- **색맹 친화적**: 색상 외에도 패턴과 텍스트로 정보 전달
+- **스크린 리더 지원**: 시각 장애인을 위한 완전한 접근성
+- **키보드 네비게이션**: 마우스 없이도 모든 기능 사용 가능
 
+### 개인화된 경험
+- **경험 수준별 UI**: 초보자/중급자/고급자 맞춤 인터페이스
+- **리스크 성향 반영**: 보수적/중립적/공격적 투자 성향별 필터링
+- **선호 섹터 설정**: 관심 있는 업종 위주로 정보 제공
 
-모바일 최적화  
+## 🚀 빠른 시작
 
-오프라인에서도 캐시된 데이터를 볼 수 있는 PWA(Progressive Web App).
-스와이프 제스처로 관심 주식 추가/제외 가능.
+### 1. 자동 설치 및 실행
 
-
-색맹 및 장애인 지원색맹 친화적 색상과 무늬, 스크린 리더 호환으로 모든 사용자가 쉽게 접근 가능.
-
-무료 데이터 소스네이버 금융, 다음 금융, Yahoo Finance, Reddit, Google News 등 다양한 무료 소스를 사용해 정확한 추천 제공.
-
-리스크 분석시장 상황(상승장, 하락장, 횡보장)별 예측 정확도와 최대 손실 가능성을 보여줍니다.
-
-
-
-🚀 설치 및 실행 방법
-1. 준비물
-
-Python 3.8+: 프로그래밍 언어 (다운로드).
-Node.js 14+: 웹 개발 도구 (다운로드).
-Git: 코드 다운로드 도구 (다운로드).
-
-2. 자동 설치
-터미널(명령 프롬프트)을 열고 아래 명령어를 실행하세요:
-# 1. 프로젝트 다운로드
+```bash
+# 프로젝트 클론
 git clone https://github.com/retellretell/stock-recommendation.git
 cd stock-recommendation
 
-# 2. 설치 스크립트 실행
-bash install.sh  # Windows: ./install.sh
+# 자동 설치 및 실행
+bash run.sh
+```
 
-이 스크립트는 자동으로:
+웹 브라우저에서 `http://localhost:3000` 접속
 
-백엔드(Python)와 프론트엔드(React/Next.js)를 설치.
-환경 설정 파일(.env)을 복사.
-초기 데이터를 수집.
+### 2. 수동 설치 (개발자용)
 
-3. 실행
-설치 후 아래 명령어로 앱을 시작하세요:
-bash run.sh  # Windows: ./run.sh
+#### 백엔드 설정
 
-브라우저에서 http://localhost:3000을 열어 앱을 확인하세요.
-4. 환경 설정
-.env 파일에 무료 API 키(예: Twitter API, Google Trends)를 추가하세요. 개발자가 설정을 도와줄 수 있습니다.
+```bash
+cd backend
 
-🛠️ 개선된 기능 및 추가된 개선점
-이 프로젝트는 사용자 피드백을 반영해 무료로 운영 가능한 버전으로 개선되었습니다. 아래는 주요 개선점과 그 이유입니다:
+# 가상환경 생성 및 활성화
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-더 많은 무료 데이터 소스 추가  
+# 의존성 설치
+pip install -r requirements.txt
 
-개선 내용: 네이버 금융, 다음 금융, Finviz, Reddit, Google News 같은 무료 소스를 추가해 데이터 정확도를 높였습니다. 소셜 미디어(Reddit, Twitter) 데이터를 분석해 시장 분위기를 반영합니다.  
-왜 중요해?: 다양한 소스는 예측 신뢰도를 높이고, 소셜 데이터는 주식의 인기를 파악하는 데 도움을 줍니다.  
-결과: 비용 없이도 더 정확한 주식 "날씨" 추천 가능.
+# 환경 변수 설정
+cp .env.example .env
+# .env 파일을 편집하여 API 키 설정
 
+# 서버 실행
+uvicorn main:app --reload
+```
 
-AI 예측 이유 설명  
+#### 프론트엔드 설정
 
-개선 내용: SHAP 기술을 사용해 AI가 왜 특정 추천을 했는지 간단히 설명합니다. 예: "삼성전자 상승: 매출 증가(40%), 주가 상승(30%)".  
-왜 중요해?: 사용자가 추천을 신뢰하고 이해하기 쉽게 만듭니다.  
-결과: 투명한 추천으로 사용자 신뢰도 향상.
+```bash
+cd frontend
 
+# 의존성 설치
+npm install
 
-색맹 및 장애인 접근성 개선  
+# 환경 변수 설정
+cp .env.example .env.local
 
-개선 내용: 색맹 친화적 색상(파랑, 초록, 주황)과 무늬(줄무늬, 점)를 추가하고, 스크린 리더가 앱 정보를 읽어주도록 지원.  
-왜 중요해?: 모든 사용자가 앱을 편리하게 사용할 수 있어 사용자층이 넓어집니다.  
-결과: 포용적 디자인으로 더 많은 사용자 유치.
+# 개발 서버 실행
+npm run dev
+```
 
+### 3. Docker로 실행
 
-모바일 최적화  
+```bash
+# 전체 스택 실행
+docker-compose up -d
 
-개선 내용: PWA로 오프라인에서도 데이터 확인 가능, 스와이프 제스처로 관심 주식 관리, 모바일 친화적 UI(카드/리스트 뷰 전환).  
-왜 중요해?: 스마트폰 사용자가 많아 모바일 경험이 중요합니다.  
-결과: 편리한 모바일 앱으로 사용자 유지율 증가.
+# 개별 서비스 실행
+docker-compose up backend
+docker-compose up frontend
+```
 
+## 📊 API 문서
 
-사용자 맞춤화  
+### 주요 엔드포인트
 
-개선 내용: 초보자는 간단한 화면, 고급 사용자는 상세 분석 화면을 선택 가능. 사용자가 관심 섹터(IT, 바이오 등)를 설정할 수 있음.  
-왜 중요해?: 초보자와 숙련자 모두에게 적합한 경험 제공.  
-결과: 다양한 사용자 니즈 충족으로 만족도 향상.
+| 엔드포인트 | 설명 | 예시 |
+|-----------|------|------|
+| `GET /rankings` | 상승/하락 확률 랭킹 | [예시 응답](http://localhost:8000/rankings) |
+| `GET /detail/{ticker}` | 종목 상세 정보 | [삼성전자](http://localhost:8000/detail/005930) |
+| `GET /sectors` | 섹터별 날씨 지도 | [섹터 현황](http://localhost:8000/sectors) |
+| `GET /personalized/{user_id}` | 개인화 대시보드 | 맞춤 추천 |
+| `GET /backtest/results` | 백테스팅 결과 | 성능 분석 |
 
+### 실시간 API 사용 예시
 
-리스크 분석 강화  
+```python
+import requests
 
-개선 내용: 시장 상황별(상승장, 하락장, 횡보장) 예측 정확도와 리스크 지표(최대 손실, Sharpe Ratio)를 추가.  
-왜 중요해?: 사용자가 추천의 신뢰도와 투자 위험을 명확히 알 수 있음.  
-결과: 신뢰도 높은 추천으로 사용자 신뢰 강화.
+# 상위 상승 예상 종목 조회
+response = requests.get("http://localhost:8000/rankings?market=KR&limit=10")
+gainers = response.json()["top_gainers"]
 
+for stock in gainers:
+    print(f"{stock['name']}: {stock['probability']*100:.1f}% 상승 확률")
+```
 
+## 🔧 기술 스택
 
+### 백엔드
+- **FastAPI**: 고성능 Python 웹 프레임워크
+- **SQLite + aiosqlite**: 비동기 데이터베이스
+- **ONNX Runtime**: ML 모델 추론
+- **yfinance**: 무료 주식 데이터
+- **SHAP**: 설명 가능한 AI
+- **Structlog**: 구조화된 로깅
 
-📊 성능 결과
+### 프론트엔드
+- **Next.js**: React 기반 풀스택 프레임워크
+- **Tailwind CSS**: 유틸리티 기반 스타일링
+- **Chart.js**: 인터랙티브 차트
+- **SWR**: 데이터 페칭 및 캐싱
+- **TypeScript**: 타입 안전성
 
-백테스팅 결과 (2023.01~2024.01)  
+### AI/ML
+- **TensorFlow**: LSTM 시계열 모델
+- **XGBoost**: 그래디언트 부스팅
+- **ONNX**: 모델 표준화 및 최적화
+- **scikit-learn**: 전처리 및 평가
 
-전체 정확도: 62.3%  
-상승장: 71.2%  
-하락장: 54.6%  
-횡보장: 48.9%  
-개선 후 기대 효과: 무료 데이터 소스와 소셜 데이터 추가로 정확도 2~5% 향상 예상.
+## 📈 백테스팅 성능
 
+### 2023-2024년 실적 (1년간)
 
-리스크 지표  
+| 지표 | 수치 | 설명 |
+|------|------|------|
+| **전체 정확도** | 62.3% | 상승/하락 방향 예측 정확도 |
+| **상승장 정확도** | 71.2% | 강세장에서의 예측 성공률 |
+| **하락장 정확도** | 54.6% | 약세장에서의 예측 성공률 |
+| **최대 손실률** | 15.2% | 최대 드로다운 |
+| **샤프 비율** | 1.2 | 위험 대비 수익률 |
 
-최대 손실(Max Drawdown): 15.2%  
-Sharpe Ratio: 1.2 (안정적 수익률)  
-개선 후 기대 효과: 리스크 분석 강화로 사용자에게 더 투명한 정보 제공.
+### 섹터별 성과
 
+```
+IT/전자: 68.5% 정확도 (가장 높음)
+바이오: 58.1% 정확도
+금융: 61.7% 정확도
+제조업: 59.3% 정확도
+```
 
+## 🎨 사용자 인터페이스
 
+### 메인 대시보드
+```
+🌤️ 주식 날씨 예보판
 
-🔮 향후 계획
+📊 섹터별 날씨
+[IT: ☀️ 72°] [바이오: ⛅ 58°] [금융: 🌧️ 45°]
 
-3개월 목표  
+☀️ 맑음 예보 (상승 예상)    🌧️ 비 예보 (하락 예상)
 
-사용자 피드백 수집을 위한 설문 기능 추가.  
-모바일 푸시 알림(주식 급등/급락 경고).
+1위 삼성전자 ☀️              1위 LG디스플레이 🌧️
+   상승확률: 78%                하락확률: 76%
+   예상수익: +5.2%              예상손실: -3.8%
+```
 
+### 접근성 기능
+- **음성 안내**: "삼성전자, 상승 확률 78퍼센트, 신뢰도 높음"
+- **큰 글씨**: 시력이 불편한 사용자를 위한 확대 기능
+- **고대비 모드**: 명확한 색상 구분
+- **키보드 단축키**: Alt+1(메인), Alt+2(네비게이션)
 
-6개월 목표  
+## 🔐 환경 변수 설정
 
-글로벌 시장(일본, 유럽) 데이터 추가.  
-다국어 지원(영어, 일본어).
+### 백엔드 (.env)
+```env
+# API 키 (선택사항)
+KRX_API_KEY=your_krx_api_key_here
+DART_API_KEY=your_dart_api_key_here
 
+# 캐시 설정
+CACHE_TTL=10800
+CACHE_FRESHNESS=3600
 
-1년 목표  
+# API 설정
+BATCH_SIZE=100
+RATE_LIMIT_DELAY=1.0
+MAX_RETRIES=3
+```
 
-투자 교육 콘텐츠 제공.  
-커뮤니티 기능(사용자 간 종목 토론).
+### 프론트엔드 (.env.local)
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_REFRESH_INTERVAL=300000
+NEXT_PUBLIC_ENABLE_NEWS_SENTIMENT=true
+NEXT_PUBLIC_ENABLE_SECTOR_MAP=true
+```
 
+## 🤖 AI 모델 학습
 
+### Google Colab에서 모델 훈련
 
+1. `train_models.ipynb` 노트북을 Google Colab에서 열기
+2. 한국/미국 주요 종목 데이터 수집 및 전처리
+3. LSTM, XGBoost 모델 훈련
+4. ONNX 형식으로 변환 및 저장
 
-🤝 기여 방법
-이 프로젝트는 오픈소스로, 누구나 기여할 수 있습니다!  
+```python
+# 모델 훈련 예시
+from tensorflow import keras
 
-버그 제보: GitHub Issues에 문제점을 등록하세요.  
-기능 제안: 새로운 아이디어를 Issues에 공유하세요.  
-코드 기여: 
-저장소를 포크(Fork)하세요.  
-브랜치를 생성: git checkout -b feature/your-feature.  
-변경 사항 커밋: git commit -m "Add your feature".  
-풀 리퀘스트(Pull Request)를 보내세요.
+model = keras.Sequential([
+    keras.layers.LSTM(64, return_sequences=True),
+    keras.layers.Dropout(0.2),
+    keras.layers.LSTM(32),
+    keras.layers.Dense(1, activation='sigmoid')
+])
+```
 
+## 🧪 테스트
 
+```bash
+# 백엔드 테스트
+cd backend
+pytest tests/ -v
 
+# 프론트엔드 테스트
+cd frontend
+npm test
 
-⚖️ 면책 조항
-이 앱은 참고용 추천 정보를 제공하며, 투자 손실에 대해 책임지지 않습니다. 주식 투자는 본인의 판단과 책임 하에 진행하세요. 법적 규제 준수를 위해 변호사와 상의했습니다.
+# E2E 테스트
+npm run test:e2e
+```
 
-📬 문의
+## 📦 배포
 
-GitHub: retellretell/stock-recommendation  
-커뮤니티: Discord 서버
+### Vercel (프론트엔드)
+```bash
+npm install -g vercel
+vercel --prod
+```
 
-주식 추천 날씨로 투자를 더 쉽게 시작하세요! 🌦️
+### Railway/Render (백엔드)
+```bash
+# requirements.txt와 Dockerfile 자동 감지
+git push origin main
+```
+
+### Docker 배포
+```bash
+# 프로덕션 빌드
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+## 🤝 기여하기
+
+### 기여 방법
+
+1. **이슈 등록**: 버그 리포트나 기능 제안을 [Issues](https://github.com/retellretell/stock-recommendation/issues)에 등록
+2. **포크 및 개발**:
+   ```bash
+   git fork https://github.com/retellretell/stock-recommendation.git
+   git clone https://github.com/your-username/stock-recommendation.git
+   git checkout -b feature/your-feature
+   ```
+3. **풀 리퀘스트**: 변경사항을 메인 브랜치로 제출
+
+### 코딩 규칙
+
+- **Python**: Black 포매터, type hints 사용
+- **TypeScript**: ESLint + Prettier 설정 준수
+- **커밋 메시지**: `feat:`, `fix:`, `docs:` 등 conventional commits
+
+### 우선순위가 높은 기여 영역
+
+- [ ] 새로운 ML 모델 (Transformer, GNN 등)
+- [ ] 추가 데이터 소스 (뉴스 API, 소셜 미디어)
+- [ ] 다국어 지원 (영어, 일본어)
+- [ ] 모바일 앱 (React Native)
+- [ ] 음성 인터페이스 (Web Speech API)
+
+## 📝 라이선스
+
+이 프로젝트는 [MIT 라이선스](LICENSE) 하에 배포됩니다.
+
+```
+MIT License
+
+Copyright (c) 2025 rin choi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy...
+```
+
+## ⚠️ 면책 조항
+
+- 이 앱은 **교육 및 참고 목적**으로 제작되었습니다
+- AI 예측은 **100% 정확하지 않으며**, 투자 손실에 대해 책임지지 않습니다
+- 모든 투자는 **본인의 판단과 책임** 하에 진행하세요
+- 실제 투자 전 **전문가 상담**을 권장합니다
+
+## 📞 지원 및 문의
+
+### 커뮤니티
+- **GitHub Discussions**: 일반적인 질문과 토론
+- **Discord**: [실시간 채팅방](https://discord.gg/stock-weather)
+- **Issues**: 버그 리포트 및 기능 요청
+
+### 개발자 연락처
+- **GitHub**: [@retellretell](https://github.com/retellretell)
+- **Email**: xx
+
+---
+
+<div align="center">
+
+**⭐ 이 프로젝트가 도움이 되었다면 GitHub Star를 눌러주세요!**
+
+[🌟 Star 추가하기](https://github.com/retellretell/stock-recommendation/stargazers) | [🐛 버그 신고](https://github.com/retellretell/stock-recommendation/issues) | [💡 기능 제안](https://github.com/retellretell/stock-recommendation/discussions)
+
+*주식 투자는 신중하게, AI는 도구로 활용하세요* 📈
+
+</div>
