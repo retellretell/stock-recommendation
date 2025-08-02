@@ -1,8 +1,9 @@
 """
-데이터 모델 정의 (Pydantic)
+데이터 모델 정의 (Pydantic) - 개선된 버전
+개인화, 접근성, 설명가능한 AI를 위한 새로운 모델 추가
 """
 from pydantic import BaseModel, validator, Field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 from enum import Enum
 
@@ -10,6 +11,28 @@ class Market(str, Enum):
     ALL = "ALL"
     KR = "KR"
     US = "US"
+
+class ExperienceLevel(str, Enum):
+    BEGINNER = "beginner"
+    INTERMEDIATE = "intermediate"
+    ADVANCED = "advanced"
+
+class RiskTolerance(str, Enum):
+    CONSERVATIVE = "conservative"
+    MODERATE = "moderate"
+    AGGRESSIVE = "aggressive"
+
+class InvestmentStyle(str, Enum):
+    GROWTH = "growth"
+    VALUE = "value"
+    DIVIDEND = "dividend"
+    BALANCED = "balanced"
+
+class ColorScheme(str, Enum):
+    DEFAULT = "default"
+    COLORBLIND = "colorblind"
+    DARK = "dark"
+    HIGH_CONTRAST = "high_contrast"
 
 class StockData(BaseModel):
     ticker: str
@@ -66,7 +89,32 @@ class FinancialMetrics(BaseModel):
                                abs(historical_data['eps_prev_year'])) * 100
         return self
 
+# 새로운 모델들 추가
+
+class ExplanationFactor(BaseModel):
+    """예측 설명 요인"""
+    name: str
+    impact: float
+    value: float
+    description: str
+
+class PredictionExplanation(BaseModel):
+    """예측 설명"""
+    top_positive_factors: List[ExplanationFactor]
+    top_negative_factors: List[ExplanationFactor]
+    feature_importance: List[Dict[str, float]]
+    natural_language: str
+
+class ExplainedPrediction(BaseModel):
+    """설명 가능한 예측 결과"""
+    probability: float = Field(ge=0, le=1)
+    expected_return: float
+    confidence: float = Field(ge=0, le=1)
+    explanation: PredictionExplanation
+    transparency_score: float = Field(ge=0, le=1)
+
 class StockRanking(BaseModel):
+    """개선된 주식 랭킹"""
     ticker: str
     name: str
     sector: str
@@ -75,8 +123,12 @@ class StockRanking(BaseModel):
     fundamental_score: float = Field(ge=0, le=1)
     weather_icon: str
     confidence: float = Field(ge=0, le=1)
+    social_sentiment: Optional[float] = Field(default=None, ge=0, le=1)
+    composite_score: Optional[float] = Field(default=None, ge=0, le=1)
+    accessibility_label: Optional[str] = None
 
 class DetailedStock(BaseModel):
+    """개선된 상세 종목 정보"""
     ticker: str
     name: str
     sector: str
@@ -85,20 +137,4 @@ class DetailedStock(BaseModel):
     expected_return: float
     fundamental_breakdown: Dict[str, Dict[str, float]]
     price_history: List[PriceHistory]
-    news_sentiment: Optional[float] = Field(default=None, ge=-1, le=1)
-    technical_indicators: Dict[str, float]
-    last_updated: datetime
-
-class RankingsResponse(BaseModel):
-    top_gainers: List[StockRanking]
-    top_losers: List[StockRanking]
-    updated_at: datetime
-    cache_info: Optional[Dict] = None
-
-class SectorWeather(BaseModel):
-    sector: str
-    probability: float = Field(ge=0, le=1)
-    weather_icon: str
-    weather_desc: str
-    stock_count: int = Field(ge=0)
-    top_stock: str
+    news_sentiment: Optional[float] =
