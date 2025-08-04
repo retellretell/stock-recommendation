@@ -12,6 +12,28 @@ export interface StockData {
   weather_icon: string;
   confidence: number;
 }
+export interface StockData {
+  ticker: string;
+  name: string;
+  sector: string;
+  probability: number;
+  expected_return: number;
+  fundamental_score: number;
+  weather_icon: string;
+  confidence: number;
+  social_sentiment?: number;
+  composite_score?: number;
+  accessibility_label?: string;
+  // 스마트 규칙 기반 예측 필드
+  signal_direction?: 'BUY' | 'SELL' | 'HOLD';
+  risk_level?: 'low' | 'medium' | 'high';
+  top_reasons?: string[];
+  technical_summary?: {
+    rsi?: number;
+    macd?: number;
+    trend?: 'bullish' | 'bearish' | 'neutral';
+  };
+}
 
 export interface RankingsData {
   top_gainers: StockData[];
