@@ -2,6 +2,11 @@
 주식 날씨 예보판 - FastAPI 메인 서버 (개선된 버전)
 접근성, 개인화, 설명가능한 AI 기능 추가
 """
+from explainable_ai import ExplainablePredictor
+from personalization import UserPersonalization
+from alternative_data import AlternativeDataAnalyzer
+from enhanced_backtesting import EnhancedBacktester
+from alpha_vantage_client import AlphaVantageClient
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
