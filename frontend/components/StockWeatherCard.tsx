@@ -1,121 +1,388 @@
-import React from 'react';
-import clsx from 'clsx';
-import { StockData, TabType } from '../types/stock';
-import { formatUtils } from '../utils/api';
+"""
+ML 예측 모델
+"""
+import numpy as np
+import pandas as pd
+from typing import Dict, List, Optional
+import onnxruntime as ort
+import logging
+import os
+import aiohttp
+import asyncio
+from technical_indicators import TechnicalIndicators
+from trading_rules import TradingRules, TradingSignal
 
-interface StockWeatherCardProps {
-  stock: StockData;
-  rank: number;
-  type: TabType;
-}
+logger = logging.getLogger(__name__)
 
-export default function StockWeatherCard({ stock, rank, type }: StockWeatherCardProps) {
-  const isGainer = type === 'gainers';
-  
-  // 신뢰도를 별 개수로 변환
-  const starCount = Math.round(stock.confidence * 5);
-  
-  return (
-    <div className={clsx(
-      'bg-white rounded-xl shadow-lg p-6 cursor-pointer transition-all duration-300',
-      'hover:shadow-xl hover:-translate-y-1',
-      isGainer ? 'border-t-4 border-blue-500' : 'border-t-4 border-gray-700'
-    )}>
-      {/* 순위 배지 */}
-      <div className="flex justify-between items-start mb-4">
-        <span className={clsx(
-          'inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold',
-          rank <= 3 ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'
-        )}>
-          {rank}
-        </span>
-        <span className="text-3xl animate-pulse-slow">{stock.weather_icon}</span>
-      </div>
+class StockPredictor:
+    """주식 상승/하락 예측 모델"""
+    
+    def __init__(self):
+        self.models = {}
+        self.model_urls = {
+            'lstm': 'https://github.com/yourusername/stock-weather/releases/download/v1.0/lstm_model.onnx',
+            'gru': 'https://github.com/yourusername/stock-weather/releases/download/v1.0/gru_model.onnx',
+            'xgboost': 'https://github.com/yourusername/stock-weather/releases/download/v1.0/xgboost_model.onnx',
+            'transformer': 'https://github.com/yourusername/stock-weather/releases/download/v1.0/transformer_model.onnx'
+        }
+        self.is_loaded = False
+        
+    async def load_models(self):
+        """모델 로드 (ONNX)"""
+        model_dir = "models"
+        os.makedirs(model_dir, exist_ok=True)
+        
+        for model_name, url in self.model_urls.items():
+            model_path = os.path.join(model_dir, f"{model_name}.onnx")
+            
+            # 모델 파일이 없으면 다운로드
+            if not os.path.exists(model_path):
+                logger.info(f"{model_name} 모델 다운로드 중...")
+                await self._download_model(url, model_path)
+            
+            # ONNX 런타임 세션 생성
+            try:
+                self.models[model_name] = ort.InferenceSession(model_path)
+                logger.info(f"{model_name} 모델 로드 완료")
+            except Exception as e:
+                logger.error(f"{model_name} 모델 로드 실패: {e}")
+        
+        self.is_loaded = len(self.models) > 0
+        
+        if not self.is_loaded:
+            # 모델이 없을 경우 스마트 규칙 예측기 사용
+            logger.warning("ML 모델 로드 실패, 스마트 규칙 예측기 사용")
+            self.models['smart_rules'] = SmartRulePredictor()
+    
+    async def _download_model(self, url: str, path: str):
+        """모델 파일 다운로드"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        content = await response.read()
+                        with open(path, 'wb') as f:
+                            f.write(content)
+                        logger.info(f"모델 다운로드 완료: {path}")
+                    else:
+                        logger.error(f"모델 다운로드 실패: {response.status}")
+        except Exception as e:
+            logger.error(f"모델 다운로드 오류: {e}")
+    
+    async def predict_single(self, stock_data: Dict) -> Dict[str, float]:
+        """단일 종목 예측"""
+        try:
+            # 특징 추출
+            features = self._extract_features(stock_data)
+            
+            # 각 모델 예측
+            predictions = []
+            confidences = []
+            smart_signal = None  # 스마트 규칙 신호 저장용
+            
+            for model_name, model in self.models.items():
+                if model_name == 'smart_rules':
+                    # 스마트 규칙 예측기는 전체 데이터를 사용
+                    pred = model.predict_with_data(stock_data)
+                    predictions.append(pred['probability'])
+                    confidences.append(pred.get('confidence', 0.5))
+                    
+                    # 스마트 규칙의 추가 정보 저장
+                    if 'signal' in pred:
+                        smart_signal = pred
+                else:
+                    pred = self._run_onnx_inference(model, features)
+                    predictions.append(pred['probability'])
+                    confidences.append(pred.get('confidence', 0.5))
+            
+            # 앙상블 (Soft Voting)
+            avg_probability = np.mean(predictions)
+            avg_confidence = np.mean(confidences)
+            
+            # 예상 수익률 계산
+            expected_return = self._calculate_expected_return(avg_probability, stock_data)
+            
+            result = {
+                'probability': float(avg_probability),
+                'expected_return': float(expected_return),
+                'confidence': float(avg_confidence)
+            }
+            
+            # 스마트 규칙 추가 정보가 있으면 포함
+            if smart_signal:
+                result.update({
+                    'signal_direction': smart_signal.get('signal').direction if smart_signal.get('signal') else 'HOLD',
+                    'risk_level': smart_signal.get('risk_level', 'medium'),
+                    'top_reasons': smart_signal.get('top_reasons', []),
+                    'technical_summary': {
+                        'rsi': smart_signal.get('technical_indicators', {}).get('rsi'),
+                        'macd': smart_signal.get('technical_indicators', {}).get('macd', {}).get('histogram') if smart_signal.get('technical_indicators', {}).get('macd') else None,
+                        'trend': 'bullish' if avg_probability > 0.6 else 'bearish' if avg_probability < 0.4 else 'neutral'
+                    }
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"예측 오류: {e}")
+            # 기본값 반환
+            return {
+                'probability': 0.5,
+                'expected_return': 0.0,
+                'confidence': 0.3
+            }
+    
+    def _extract_features(self, stock_data: Dict) -> np.ndarray:
+        """예측을 위한 특징 추출"""
+        features = []
+        
+        # 가격 데이터 (최근 120일)
+        price_history = stock_data.get('price_history', [])
+        if len(price_history) >= 120:
+            prices = [p['close'] for p in price_history[-120:]]
+            
+            # 수익률 계산
+            returns = [(prices[i] / prices[i-1] - 1) for i in range(1, len(prices))]
+            
+            # 기술적 지표
+            features.extend([
+                np.mean(returns[-5:]),    # 5일 평균 수익률
+                np.mean(returns[-20:]),   # 20일 평균 수익률
+                np.std(returns[-20:]),    # 20일 변동성
+                self._calculate_rsi(prices, 14),  # RSI
+                self._calculate_macd(prices)      # MACD
+            ])
+        else:
+            # 기본값
+            features.extend([0, 0, 0.02, 50, 0])
+        
+        # 펀더멘털 지표
+        features.extend([
+            stock_data.get('pe_ratio', 15) / 30,      # PE 정규화
+            stock_data.get('roe', 10) / 30,           # ROE 정규화
+            stock_data.get('eps_yoy', 0) / 100,       # EPS 성장률
+            stock_data.get('revenue_yoy', 0) / 100    # 매출 성장률
+        ])
+        
+        # 시장 데이터 (섹터 더미 변수 등 추가 가능)
+        
+        return np.array(features, dtype=np.float32).reshape(1, -1)
+    
+    def _run_onnx_inference(self, session: ort.InferenceSession, features: np.ndarray) -> Dict:
+        """ONNX 모델 추론"""
+        input_name = session.get_inputs()[0].name
+        output_name = session.get_outputs()[0].name
+        
+        # 추론 실행
+        outputs = session.run([output_name], {input_name: features})
+        probability = outputs[0][0]
+        
+        # Sigmoid 적용 (필요한 경우)
+        if probability < 0 or probability > 1:
+            probability = 1 / (1 + np.exp(-probability))
+        
+        return {
+            'probability': float(probability),
+            'confidence': 0.7  # 실제 모델에서는 신뢰도도 출력
+        }
+    
+    def _calculate_expected_return(self, probability: float, stock_data: Dict) -> float:
+        """예상 수익률 계산"""
+        # 과거 변동성 기반 예상 수익률
+        price_history = stock_data.get('price_history', [])
+        if len(price_history) >= 20:
+            prices = [p['close'] for p in price_history[-20:]]
+            returns = [(prices[i] / prices[i-1] - 1) for i in range(1, len(prices))]
+            avg_return = np.mean(returns)
+            volatility = np.std(returns)
+            
+            # 확률 기반 방향성 조정
+            if probability > 0.5:
+                expected = avg_return + volatility * (probability - 0.5) * 2
+            else:
+                expected = avg_return - volatility * (0.5 - probability) * 2
+            
+            return expected * 100  # 퍼센트로 변환
+        
+        return 0.0
+    
+    def _calculate_rsi(self, prices: List[float], period: int = 14) -> float:
+        """RSI 계산"""
+        if len(prices) < period + 1:
+            return 50.0
+        
+        gains = []
+        losses = []
+        
+        for i in range(1, len(prices)):
+            diff = prices[i] - prices[i-1]
+            if diff > 0:
+                gains.append(diff)
+                losses.append(0)
+            else:
+                gains.append(0)
+                losses.append(abs(diff))
+        
+        avg_gain = np.mean(gains[-period:])
+        avg_loss = np.mean(losses[-period:])
+        
+        if avg_loss == 0:
+            return 100.0
+        
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
+    
+    def _calculate_macd(self, prices: List[float]) -> float:
+        """MACD 계산 (간단한 버전)"""
+        if len(prices) < 26:
+            return 0.0
+        
+        # EMA 계산
+        ema12 = self._calculate_ema(prices, 12)
+        ema26 = self._calculate_ema(prices, 26)
+        
+        macd = ema12 - ema26
+        return macd / prices[-1] * 100  # 정규화
+    
+    def _calculate_ema(self, prices: List[float], period: int) -> float:
+        """지수이동평균 계산"""
+        if len(prices) < period:
+            return prices[-1]
+        
+        multiplier = 2 / (period + 1)
+        ema = prices[-period]
+        
+        for price in prices[-period+1:]:
+            ema = (price - ema) * multiplier + ema
+        
+        return ema
 
-      {/* 종목 정보 */}
-      <h3 className="font-bold text-lg mb-1 line-clamp-1" title={stock.name}>
-        {stock.name}
-      </h3>
-      <p className="text-sm text-gray-600 mb-4">
-        {stock.ticker} · {stock.sector}
-      </p>
 
-      {/* 확률 표시 */}
-      <div className="mb-4">
-        <div className="flex justify-between items-center mb-1">
-          <span className="text-sm text-gray-600">상승 확률</span>
-          <span className={clsx(
-            'font-bold',
-            stock.probability >= 0.6 ? 'text-blue-600' : 'text-gray-600'
-          )}>
-            {formatUtils.formatNumber(stock.probability * 100, 1)}%
-          </span>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-          <div
-            className={clsx(
-              'h-2 rounded-full transition-all duration-500',
-              stock.probability >= 0.7 ? 'bg-gradient-to-r from-blue-400 to-blue-600' :
-              stock.probability >= 0.5 ? 'bg-gradient-to-r from-green-400 to-green-600' :
-              stock.probability >= 0.3 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' : 
-              'bg-gradient-to-r from-red-400 to-red-600'
-            )}
-            style={{ width: `${stock.probability * 100}%` }}
-          />
-        </div>
-      </div>
-
-      {/* 예상 수익률 */}
-      <div className="flex justify-between items-center mb-4">
-        <span className="text-sm text-gray-600">예상 수익률</span>
-        <span className={clsx(
-          'font-bold',
-          stock.expected_return > 0 ? 'text-green-600' : 'text-red-600'
-        )}>
-          {formatUtils.formatPercent(stock.expected_return, 2)}
-        </span>
-      </div>
-
-      {/* 펀더멘털 스코어 */}
-      <div className="flex justify-between items-center mb-4">
-        <span className="text-sm text-gray-600">펀더멘털</span>
-        <div className="flex items-center">
-          <div className="w-16 bg-gray-200 rounded-full h-1.5 mr-2">
-            <div
-              className="bg-indigo-500 h-1.5 rounded-full"
-              style={{ width: `${stock.fundamental_score * 100}%` }}
-            />
-          </div>
-          <span className="text-xs text-gray-500">
-            {formatUtils.formatNumber(stock.fundamental_score * 100, 0)}
-          </span>
-        </div>
-      </div>
-
-      {/* 신뢰도 표시 */}
-      <div className="mt-4 pt-4 border-t border-gray-100">
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-500">신뢰도</span>
-          <div className="flex items-center space-x-0.5">
-            {[1, 2, 3, 4, 5].map((star) => (
-              <svg
-                key={star}
-                className={clsx(
-                  'w-3 h-3 transition-colors',
-                  star <= starCount ? 'text-yellow-400' : 'text-gray-300'
-                )}
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-              </svg>
-            ))}
-            <span className="ml-1 text-xs text-gray-500">
-              ({formatUtils.formatNumber(stock.confidence * 100, 0)}%)
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+class SmartRulePredictor:
+    """스마트 규칙 기반 예측기 (실제 거래 전략 구현)"""
+    
+    def __init__(self):
+        self.technical_analyzer = TechnicalIndicators()
+        self.trading_rules = TradingRules()
+        logger.info("SmartRulePredictor 초기화 완료")
+    
+    def predict(self, features: np.ndarray) -> Dict:
+        """규칙 기반 예측 (더미 features는 무시하고 실제 데이터 사용)"""
+        # 이 메서드는 기존 호환성을 위해 유지
+        # 실제로는 predict_with_data를 사용
+        return {
+            'probability': 0.5,
+            'confidence': 0.3
+        }
+    
+    def predict_with_data(self, stock_data: Dict) -> Dict:
+        """실제 주식 데이터로 예측"""
+        try:
+            # 가격 히스토리 확인
+            price_history = stock_data.get('price_history', [])
+            if len(price_history) < 20:
+                logger.warning("insufficient_price_history", ticker=stock_data.get('ticker'))
+                return {
+                    'probability': 0.5,
+                    'expected_return': 0.0,
+                    'confidence': 0.1,
+                    'signal': None,
+                    'explanation': "데이터 부족으로 분석 불가"
+                }
+            
+            # 기술적 지표 계산
+            technical_indicators = self.technical_analyzer.calculate_all_indicators(price_history)
+            
+            # 펀더멘털 데이터
+            fundamental_data = {
+                'score': stock_data.get('fundamental_score', 0.5),
+                'pe_ratio': stock_data.get('pe_ratio'),
+                'roe': stock_data.get('roe'),
+                'eps_yoy': stock_data.get('eps_yoy'),
+                'revenue_yoy': stock_data.get('revenue_yoy')
+            }
+            
+            # 거래 신호 생성
+            signal = self.trading_rules.generate_signal(technical_indicators, fundamental_data)
+            
+            # 확률로 변환
+            if signal.direction == 'BUY':
+                probability = 0.5 + (signal.strength * 0.5)
+            elif signal.direction == 'SELL':
+                probability = 0.5 - (signal.strength * 0.5)
+            else:  # HOLD
+                probability = 0.5
+            
+            # 예상 수익률 계산
+            expected_return = self._calculate_expected_return(
+                signal, 
+                technical_indicators, 
+                stock_data.get('sector', 'Unknown')
+            )
+            
+            # 설명 생성
+            explanation = self.trading_rules.get_signal_explanation(signal)
+            
+            return {
+                'probability': float(probability),
+                'expected_return': float(expected_return),
+                'confidence': float(signal.confidence),
+                'signal': signal,
+                'technical_indicators': technical_indicators,
+                'explanation': explanation,
+                'risk_level': signal.risk_level,
+                'top_reasons': signal.reasons[:3]  # 상위 3개 이유
+            }
+            
+        except Exception as e:
+            logger.error("smart_prediction_error", error=str(e))
+            return {
+                'probability': 0.5,
+                'expected_return': 0.0,
+                'confidence': 0.1,
+                'signal': None,
+                'explanation': "분석 중 오류 발생"
+            }
+    
+    def _calculate_expected_return(self, signal: TradingSignal, technical: Dict, sector: str) -> float:
+        """예상 수익률 계산"""
+        # 기본 수익률 (신호 강도 기반)
+        base_return = 0.0
+        
+        if signal.direction == 'BUY':
+            base_return = signal.strength * 5.0  # 최대 5%
+        elif signal.direction == 'SELL':
+            base_return = -signal.strength * 5.0  # 최대 -5%
+        
+        # 변동성 조정
+        atr = technical.get('atr', 0)
+        current_price = technical.get('current_price', 1)
+        volatility_factor = (atr / current_price) if current_price > 0 else 0.02
+        
+        # 변동성이 높으면 예상 수익률도 증가
+        volatility_multiplier = 1 + (volatility_factor * 10)
+        adjusted_return = base_return * volatility_multiplier
+        
+        # 섹터별 조정
+        sector_multipliers = {
+            '바이오': 1.5,      # 높은 변동성
+            'IT': 1.3,
+            '전자': 1.2,
+            '금융': 0.8,        # 낮은 변동성
+            '유틸리티': 0.7,
+            '필수소비재': 0.7
+        }
+        
+        sector_mult = sector_multipliers.get(sector, 1.0)
+        final_return = adjusted_return * sector_mult
+        
+        # 리스크 레벨에 따른 조정
+        if signal.risk_level == 'high':
+            final_return *= 1.2  # 고위험 고수익
+        elif signal.risk_level == 'low':
+            final_return *= 0.8  # 저위험 저수익
+        
+        # -10% ~ +10% 범위로 제한
+        return max(-10.0, min(10.0, final_return))
