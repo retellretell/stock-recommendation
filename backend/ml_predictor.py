@@ -9,6 +9,8 @@ import logging
 import os
 import aiohttp
 import asyncio
+from technical_indicators import TechnicalIndicators
+from trading_rules import TradingRules, TradingSignal
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +50,9 @@ class StockPredictor:
         self.is_loaded = len(self.models) > 0
         
         if not self.is_loaded:
-            # 모델이 없을 경우 더미 예측기 사용
-            logger.warning("ML 모델 로드 실패, 더미 예측기 사용")
-            self.models['dummy'] = DummyPredictor()
+            # 모델이 없을 경우 스마트 규칙 예측기 사용
+            logger.warning("ML 모델 로드 실패, 스마트 규칙 예측기 사용")
+            self.models['smart_rules'] = SmartRulePredictor()
     
     async def _download_model(self, url: str, path: str):
         """모델 파일 다운로드"""
@@ -76,15 +78,22 @@ class StockPredictor:
             # 각 모델 예측
             predictions = []
             confidences = []
+            smart_signal = None  # 스마트 규칙 신호 저장용
             
             for model_name, model in self.models.items():
-                if model_name == 'dummy':
-                    pred = model.predict(features)
+                if model_name == 'smart_rules':
+                    # 스마트 규칙 예측기는 전체 데이터를 사용
+                    pred = model.predict_with_data(stock_data)
+                    predictions.append(pred['probability'])
+                    confidences.append(pred.get('confidence', 0.5))
+                    
+                    # 스마트 규칙의 추가 정보 저장
+                    if 'signal' in pred:
+                        smart_signal = pred
                 else:
                     pred = self._run_onnx_inference(model, features)
-                
-                predictions.append(pred['probability'])
-                confidences.append(pred.get('confidence', 0.5))
+                    predictions.append(pred['probability'])
+                    confidences.append(pred.get('confidence', 0.5))
             
             # 앙상블 (Soft Voting)
             avg_probability = np.mean(predictions)
@@ -93,11 +102,26 @@ class StockPredictor:
             # 예상 수익률 계산
             expected_return = self._calculate_expected_return(avg_probability, stock_data)
             
-            return {
+            result = {
                 'probability': float(avg_probability),
                 'expected_return': float(expected_return),
                 'confidence': float(avg_confidence)
             }
+            
+            # 스마트 규칙 추가 정보가 있으면 포함
+            if smart_signal:
+                result.update({
+                    'signal_direction': smart_signal.get('signal').direction if smart_signal.get('signal') else 'HOLD',
+                    'risk_level': smart_signal.get('risk_level', 'medium'),
+                    'top_reasons': smart_signal.get('top_reasons', []),
+                    'technical_summary': {
+                        'rsi': smart_signal.get('technical_indicators', {}).get('rsi'),
+                        'macd': smart_signal.get('technical_indicators', {}).get('macd', {}).get('histogram') if smart_signal.get('technical_indicators', {}).get('macd') else None,
+                        'trend': 'bullish' if avg_probability > 0.6 else 'bearish' if avg_probability < 0.4 else 'neutral'
+                    }
+                })
+            
+            return result
             
         except Exception as e:
             logger.error(f"예측 오류: {e}")
@@ -236,20 +260,129 @@ class StockPredictor:
         return ema
 
 
-class DummyPredictor:
-    """더미 예측기 (모델이 없을 때 사용)"""
+class SmartRulePredictor:
+    """스마트 규칙 기반 예측기 (실제 거래 전략 구현)"""
+    
+    def __init__(self):
+        self.technical_analyzer = TechnicalIndicators()
+        self.trading_rules = TradingRules()
+        logger.info("SmartRulePredictor 초기화 완료")
     
     def predict(self, features: np.ndarray) -> Dict:
-        """간단한 규칙 기반 예측"""
-        # 최근 수익률과 펀더멘털 점수 기반
-        recent_return = features[0][0]  # 5일 평균 수익률
-        fundamental_score = np.mean(features[0][5:9])  # 펀더멘털 지표 평균
-        
-        # 단순 가중 평균
-        probability = 0.5 + recent_return * 2 + fundamental_score * 0.3
-        probability = max(0, min(1, probability))  # 0-1 범위로 제한
-        
+        """규칙 기반 예측 (더미 features는 무시하고 실제 데이터 사용)"""
+        # 이 메서드는 기존 호환성을 위해 유지
+        # 실제로는 predict_with_data를 사용
         return {
-            'probability': float(probability),
-            'confidence': 0.3  # 낮은 신뢰도
+            'probability': 0.5,
+            'confidence': 0.3
         }
+    
+    def predict_with_data(self, stock_data: Dict) -> Dict:
+        """실제 주식 데이터로 예측"""
+        try:
+            # 가격 히스토리 확인
+            price_history = stock_data.get('price_history', [])
+            if len(price_history) < 20:
+                logger.warning("insufficient_price_history", ticker=stock_data.get('ticker'))
+                return {
+                    'probability': 0.5,
+                    'expected_return': 0.0,
+                    'confidence': 0.1,
+                    'signal': None,
+                    'explanation': "데이터 부족으로 분석 불가"
+                }
+            
+            # 기술적 지표 계산
+            technical_indicators = self.technical_analyzer.calculate_all_indicators(price_history)
+            
+            # 펀더멘털 데이터
+            fundamental_data = {
+                'score': stock_data.get('fundamental_score', 0.5),
+                'pe_ratio': stock_data.get('pe_ratio'),
+                'roe': stock_data.get('roe'),
+                'eps_yoy': stock_data.get('eps_yoy'),
+                'revenue_yoy': stock_data.get('revenue_yoy')
+            }
+            
+            # 거래 신호 생성
+            signal = self.trading_rules.generate_signal(technical_indicators, fundamental_data)
+            
+            # 확률로 변환
+            if signal.direction == 'BUY':
+                probability = 0.5 + (signal.strength * 0.5)
+            elif signal.direction == 'SELL':
+                probability = 0.5 - (signal.strength * 0.5)
+            else:  # HOLD
+                probability = 0.5
+            
+            # 예상 수익률 계산
+            expected_return = self._calculate_expected_return(
+                signal, 
+                technical_indicators, 
+                stock_data.get('sector', 'Unknown')
+            )
+            
+            # 설명 생성
+            explanation = self.trading_rules.get_signal_explanation(signal)
+            
+            return {
+                'probability': float(probability),
+                'expected_return': float(expected_return),
+                'confidence': float(signal.confidence),
+                'signal': signal,
+                'technical_indicators': technical_indicators,
+                'explanation': explanation,
+                'risk_level': signal.risk_level,
+                'top_reasons': signal.reasons[:3]  # 상위 3개 이유
+            }
+            
+        except Exception as e:
+            logger.error("smart_prediction_error", error=str(e))
+            return {
+                'probability': 0.5,
+                'expected_return': 0.0,
+                'confidence': 0.1,
+                'signal': None,
+                'explanation': "분석 중 오류 발생"
+            }
+    
+    def _calculate_expected_return(self, signal: TradingSignal, technical: Dict, sector: str) -> float:
+        """예상 수익률 계산"""
+        # 기본 수익률 (신호 강도 기반)
+        base_return = 0.0
+        
+        if signal.direction == 'BUY':
+            base_return = signal.strength * 5.0  # 최대 5%
+        elif signal.direction == 'SELL':
+            base_return = -signal.strength * 5.0  # 최대 -5%
+        
+        # 변동성 조정
+        atr = technical.get('atr', 0)
+        current_price = technical.get('current_price', 1)
+        volatility_factor = (atr / current_price) if current_price > 0 else 0.02
+        
+        # 변동성이 높으면 예상 수익률도 증가
+        volatility_multiplier = 1 + (volatility_factor * 10)
+        adjusted_return = base_return * volatility_multiplier
+        
+        # 섹터별 조정
+        sector_multipliers = {
+            '바이오': 1.5,      # 높은 변동성
+            'IT': 1.3,
+            '전자': 1.2,
+            '금융': 0.8,        # 낮은 변동성
+            '유틸리티': 0.7,
+            '필수소비재': 0.7
+        }
+        
+        sector_mult = sector_multipliers.get(sector, 1.0)
+        final_return = adjusted_return * sector_mult
+        
+        # 리스크 레벨에 따른 조정
+        if signal.risk_level == 'high':
+            final_return *= 1.2  # 고위험 고수익
+        elif signal.risk_level == 'low':
+            final_return *= 0.8  # 저위험 저수익
+        
+        # -10% ~ +10% 범위로 제한
+        return max(-10.0, min(10.0, final_return))
