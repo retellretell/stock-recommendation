@@ -14,6 +14,7 @@ services:
     volumes:
       - ./backend:/app
       - cache_data:/app/cache
+      - backtest_data:/app/backtest
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -31,5 +32,24 @@ services:
       - /app/node_modules
       - /app/.next
 
+  backtesting-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - ENV=development
+      - WORKER_TYPE=backtesting
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - cache_data:/app/cache
+      - backtest_data:/app/backtest
+    command: python -m backtesting.worker
+    depends_on:
+      - backend
+    restart: unless-stopped
+
 volumes:
   cache_data:
+  backtest_data:
