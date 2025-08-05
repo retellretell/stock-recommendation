@@ -1,3 +1,4 @@
+
 """
 주식 날씨 예보판 - FastAPI 메인 서버 (개선된 버전)
 접근성, 개인화, 설명가능한 AI 기능 추가
@@ -17,6 +18,7 @@ import structlog
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import time
+import os
 
 from config import settings
 from models import *
@@ -31,6 +33,9 @@ from explainable_ai import ExplainablePredictor
 from personalization import UserPersonalization
 from alternative_data import AlternativeDataAnalyzer
 from enhanced_backtesting import EnhancedBacktester
+
+# 백테스팅 모듈 import
+from backtesting import backtesting_router
 
 # 구조화된 로깅 설정
 structlog.configure(
